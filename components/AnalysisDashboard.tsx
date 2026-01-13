@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { SalesVisitAnalysis } from '../types';
-import { Trophy, Target, User, TrendingUp, AlertCircle, MessageSquare, ShieldCheck, ChevronRight, BrainCircuit, Activity, FileDown, Printer } from 'lucide-react';
+import { Trophy, Target, User, TrendingUp, AlertCircle, MessageSquare, ShieldCheck, ChevronRight, BrainCircuit, Activity, FileDown, Printer, Zap } from 'lucide-react';
 
 interface Props {
   data: SalesVisitAnalysis;
@@ -36,6 +36,7 @@ export const AnalysisDashboard: React.FC<Props> = ({ data }) => {
   const performance = insights?.sales_performance || {};
   const highlights = data?.highlights || [];
   const nextSteps = insights?.next_steps || {};
+  const keyMoments = data?.key_moments || [];
 
   const handlePrint = () => {
     window.print();
@@ -83,10 +84,7 @@ export const AnalysisDashboard: React.FC<Props> = ({ data }) => {
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Main Content (Left) */}
         <div className="lg:col-span-8 space-y-6">
-          
-          {/* Coach Advice - Optimized for Summary */}
           <section className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
             <div className="bg-slate-800 px-8 py-4 flex items-center gap-3">
               <MessageSquare className="w-5 h-5 text-indigo-400" />
@@ -122,7 +120,6 @@ export const AnalysisDashboard: React.FC<Props> = ({ data }) => {
             </div>
           </section>
 
-          {/* Performance Summary */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-200">
               <div className="flex items-center gap-2 mb-4">
@@ -157,7 +154,6 @@ export const AnalysisDashboard: React.FC<Props> = ({ data }) => {
           </div>
         </div>
 
-        {/* Sidebar (Right) */}
         <div className="lg:col-span-4 space-y-6">
           <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-200">
             <div className="flex items-center gap-2 mb-6">
@@ -238,26 +234,26 @@ export const AnalysisDashboard: React.FC<Props> = ({ data }) => {
         </div>
       </div>
 
-      {/* Transcript Text - Hidden in print by default or shortened */}
-      <section className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-200 no-print">
+      <section className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-200">
         <div className="flex items-center gap-3 mb-6">
-          <MessageSquare className="w-5 h-5 text-slate-400" />
-          <h3 className="font-bold text-slate-800 text-base">录音转写归档</h3>
+          <Zap className="w-5 h-5 text-indigo-500" />
+          <h3 className="font-bold text-slate-800 text-base">诊断关键时刻 (Key Moments)</h3>
         </div>
-        <div className="max-h-[300px] overflow-y-auto pr-4 space-y-3 scrollbar-thin scrollbar-thumb-slate-200">
-          {Array.isArray(data.transcript) ? data.transcript.map((line: any, i: number) => (
-            <div key={i} className="flex gap-4">
-              <div className="w-16 flex-shrink-0 pt-1">
-                <p className="text-[9px] font-black text-slate-300 mb-0.5 tracking-widest">{line.time || '00:00'}</p>
-                <p className={`text-[10px] font-black truncate uppercase ${String(line.speaker).includes('客户') ? 'text-blue-500' : 'text-slate-900'}`}>
-                  {line.speaker || '访客'}
-                </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {keyMoments.map((moment: any, i: number) => (
+            <div key={i} className="flex flex-col gap-2 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="flex justify-between items-center">
+                <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${String(moment.speaker).includes('客户') ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-600'}`}>
+                  {moment.speaker || '访客'} - {moment.time || '阶段'}
+                </span>
               </div>
-              <div className="flex-1 bg-slate-50 p-2.5 rounded-lg text-[13px] text-slate-600 border border-transparent">
-                {line.text || '...'}
+              <p className="text-xs text-slate-700 font-bold leading-relaxed">"{moment.text}"</p>
+              <div className="mt-2 pt-2 border-t border-slate-200">
+                <p className="text-[9px] text-indigo-500 font-black uppercase mb-1">教练点评</p>
+                <p className="text-[11px] text-slate-500 italic">{moment.insight}</p>
               </div>
             </div>
-          )) : null}
+          ))}
         </div>
       </section>
     </div>

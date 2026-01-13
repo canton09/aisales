@@ -1,10 +1,11 @@
 
 export type ScenarioKey = 'telesales_coaching' | 'field_sales_visit' | 'livestream_sales' | 'test_drive_sales';
 
-export interface TranscriptItem {
+export interface KeyMoment {
   speaker: string;
   time: string;
   text: string;
+  insight: string; // 针对该片段的即时点评
 }
 
 export interface CoachingGuidance {
@@ -52,6 +53,6 @@ export interface SalesVisitAnalysis {
     text: string;
   };
   highlights: string[];
-  transcript: TranscriptItem[];
+  key_moments: KeyMoment[]; // 改为关键时刻
   insights: SalesInsights;
 }

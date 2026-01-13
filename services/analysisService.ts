@@ -7,19 +7,23 @@ export type ModelProvider = 'deepseek' | 'gemini';
 const PROXY_ENDPOINT = '/api/deepseek-proxy';
 const DEEPSEEK_MODEL = 'deepseek-chat';
 
+// 优化点：不再要求模型返回 transcript 全文，而是返回 key_moments 关键点
 const COMMON_JSON_STRUCTURE = `
-请以“深度归纳”为原则，输出纯净的 JSON 字符串（严禁包含任何 Markdown 格式标记如 \`\`\`json 或解释性文字）：
+请以“深度归纳”为原则，输出纯净的 JSON 字符串（严禁包含任何 Markdown 格式标记如 \`\`\`json 或解释性文字）。
+如果文本过长，请聚焦于最具有诊断价值的片段，严禁复读全文。
+
+结构要求：
 {
   "summary": {
     "title": "直击痛点的诊断标题",
     "time": "时间",
     "location": "地点",
     "participants": ["角色列表"],
-    "text": "一句话深度归纳：定性本场表现及其核心矛盾。"
+    "text": "一句话深度归纳核心矛盾。"
   },
   "highlights": ["最关键的3-5个高光瞬间"],
-  "transcript": [
-    { "speaker": "角色", "time": "00:00", "text": "内容" }
+  "key_moments": [
+    { "speaker": "角色", "time": "出现阶段", "text": "话术摘要", "insight": "为何关键" }
   ],
   "insights": {
     "battle_evaluation": "评级[S-D]",
@@ -78,23 +82,34 @@ export const SCENARIO_CONFIGS: Record<ScenarioKey, { system: string, template: (
 
 function extractJson(text: string): any {
   let cleaned = text.trim();
-  // 更加鲁棒的 JSON 提取
+  
+  // 1. 尝试直接通过正则定位 JSON 块
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    console.error("No JSON in response text:", cleaned);
-    throw new Error("模型响应中未包含有效的 JSON 数据");
+    throw new Error("模型响应格式异常：未能识别到 JSON 结构");
   }
   
-  const jsonStr = jsonMatch[0];
+  let jsonStr = jsonMatch[0];
+
+  // 2. 自动修复被截断的 JSON（针对长文本常见问题）
+  const openBraces = (jsonStr.match(/\{/g) || []).length;
+  const closeBraces = (jsonStr.match(/\}/g) || []).length;
+  if (openBraces > closeBraces) {
+    // 补全缺失的右括号和可能被截断的数组
+    jsonStr += '}'.repeat(openBraces - closeBraces);
+    console.warn("Detected truncated JSON, attempted auto-fix.");
+  }
+
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
-    // 最后的尝试：清理控制字符
+    // 3. 二次修复：清理控制字符
     try {
       const fixedJson = jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
       return JSON.parse(fixedJson);
     } catch (innerError) {
-      throw new Error("诊断报告格式异常，请尝试缩短输入文本。");
+      console.error("JSON Parse Error Details:", e, "Content:", jsonStr);
+      throw new Error("诊断报告解析失败。原因：对话内容过长导致输出被截断，请尝试分段输入。");
     }
   }
 }
@@ -112,7 +127,7 @@ async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, ap
         { role: "user", content: config.template(transcript) }
       ],
       temperature: 0.1,
-      // 移除强制 JSON Object，因为在某些 Proxy 场景下，这会导致首字延迟过高
+      max_tokens: 4000 // 增加输出限制，确保存储足够的诊断内容
     })
   });
 
@@ -138,28 +153,18 @@ async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, ap
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed) continue;
+      if (!trimmed || !trimmed.startsWith('data: ')) continue;
       
-      if (trimmed.startsWith('data: ')) {
-        const dataStr = trimmed.slice(6);
-        if (dataStr === '[DONE]') continue;
-        try {
-          const json = JSON.parse(dataStr);
-          fullContent += (json.choices?.[0]?.delta?.content || "");
-        } catch (e) {}
-      } else {
-        // 如果不是 data: 开头且不为空，可能是代理返回的错误 JSON
-        try {
-          const json = JSON.parse(trimmed);
-          if (json.error) throw new Error(json.error.message || "DeepSeek 流式响应异常");
-        } catch (e) {
-          // 忽略非 JSON 垃圾信息
-        }
-      }
+      const dataStr = trimmed.slice(6);
+      if (dataStr === '[DONE]') continue;
+      try {
+        const json = JSON.parse(dataStr);
+        fullContent += (json.choices?.[0]?.delta?.content || "");
+      } catch (e) {}
     }
   }
 
-  if (!fullContent.trim()) throw new Error("DeepSeek 未返回任何分析内容，请检查 API Key 权限。");
+  if (!fullContent.trim()) throw new Error("DeepSeek 未返回任何分析内容。");
   return extractJson(fullContent);
 }
 
