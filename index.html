@@ -8,15 +8,39 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <style>
       body {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        background-color: #f1f5f9;
+        background-color: #0f172a;
         margin: 0;
+        color: #f1f5f9;
       }
       #root {
         min-height: 100vh;
+      }
+      @media print {
+        .no-print {
+          display: none !important;
+        }
+        body {
+          background-color: white !important;
+          color: black !important;
+        }
+        main {
+          margin-top: 0 !important;
+          padding: 0 !important;
+        }
+        .print-container {
+          box-shadow: none !important;
+          border: none !important;
+          background-color: white !important;
+          color: black !important;
+          width: 100% !important;
+        }
+        section {
+          break-inside: avoid;
+        }
       }
     </style>
     <script type="importmap">
@@ -35,7 +59,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- 必须包含此脚本标签，否则 React 应用不会加载 -->
     <script type="module" src="./index.tsx"></script>
   </body>
 </html>
