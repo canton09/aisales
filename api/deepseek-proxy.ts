@@ -5,7 +5,7 @@ export const config = {
 
 export default async function handler(req: Request) {
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: '仅支持 POST 请求' }), { 
+    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), { 
       status: 405,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -16,14 +16,12 @@ export default async function handler(req: Request) {
     const { apiKey, ...deepseekPayload } = body;
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: '未检测到 API Key' }), { 
+      return new Response(JSON.stringify({ error: 'API Key is required' }), { 
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // 转发请求到 DeepSeek，强制开启 stream 模式。
-    // 流式传输能让 Vercel 立即感知到数据活动，从而维持长连接，避免 504 超时。
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
@@ -33,31 +31,36 @@ export default async function handler(req: Request) {
       body: JSON.stringify({
         ...deepseekPayload,
         stream: true 
-      })
+      }),
     });
 
+    // 如果 API 直接报错，不返回流，而是返回错误内容
     if (!response.ok) {
-      const errorText = await response.text();
-      return new Response(errorText, {
+      const errorData = await response.json().catch(() => ({}));
+      return new Response(JSON.stringify({
+        error: 'DeepSeek API Error',
+        status: response.status,
+        details: errorData
+      }), { 
         status: response.status,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // 将 DeepSeek 的 ReadableStream 直接透传给前端
+    // 确保流式响应具有正确的头信息
     return new Response(response.body, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no', // 禁用 Nginx 等代理的缓存
       },
     });
 
   } catch (error: any) {
-    console.error(`[DeepSeek Proxy Error]:`, error);
     return new Response(JSON.stringify({ 
-      error: '代理网关内部错误',
-      details: error.message
+      error: 'Proxy Internal Error',
+      message: error.message
     }), { 
       status: 502,
       headers: { 'Content-Type': 'application/json' }
