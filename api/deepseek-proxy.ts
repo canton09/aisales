@@ -18,30 +18,34 @@ export default async function handler(req: Request) {
     const { apiKey, ...deepseekPayload } = body;
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'Missing API Key' }), { 
+      return new Response(JSON.stringify({ error: '请提供 API Key' }), { 
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // 显式指定 API 路径
-    const response = await fetch('https://api.deepseek.com/chat/completions', {
+    // 使用 AbortController 为内部 fetch 设置超时（25秒，以符合 Vercel Edge Runtime 的限制）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey.trim()}`,
         'Accept': 'application/json',
       },
+      signal: controller.signal,
       body: JSON.stringify({
         ...deepseekPayload,
-        stream: false // 强制关闭流式，确保一次性返回
+        stream: false // 强制禁用流式输出，确保一次性获取完整 JSON
       })
     });
 
+    clearTimeout(timeoutId);
+
     const data = await response.text();
     const duration = Date.now() - startTime;
-    
-    console.log(`[Proxy] DeepSeek 响应耗时: ${duration}ms, 状态: ${response.status}`);
     
     return new Response(data, {
       status: response.status,
@@ -53,12 +57,19 @@ export default async function handler(req: Request) {
     });
 
   } catch (error: any) {
-    console.error('[Proxy Error]:', error);
+    const duration = Date.now() - startTime;
+    console.error(`[Proxy Error] after ${duration}ms:`, error);
+    
+    let errorMessage = '代理层通信异常';
+    if (error.name === 'AbortError') {
+      errorMessage = 'DeepSeek 接口响应超时（代理层限制 25s）。由于 DeepSeek 模型近期负载极高，请精简输入内容或切换至 Gemini Flash 引擎。';
+    }
+
     return new Response(JSON.stringify({ 
-      error: error.message || '代理层通信异常',
-      details: '请检查 Vercel 函数运行日志'
+      error: errorMessage,
+      details: error.message
     }), { 
-      status: 500,
+      status: 504, // Gateway Timeout
       headers: { 'Content-Type': 'application/json' }
     });
   }

@@ -24,13 +24,17 @@ const JSON_STRUCTURE_INSTRUCTION = `
    }
 `;
 
-const SYSTEM_INSTRUCTION = `你是一位专业的汽车销售复盘教练。
+const SYSTEM_INSTRUCTION = `你是一位专业的汽车销售复盘教练。请基于实战逻辑进行诊断。
 ${JSON_STRUCTURE_INSTRUCTION}
-注意：严禁输出任何 Markdown 标签（如 \`\`\`json），直接以 { 开始，以 } 结束。`;
+注意：直接输出 JSON，不要包含任何 Markdown 格式（如 \`\`\`json 标签）。`;
 
+/**
+ * 强力 JSON 提取器：剥离 Markdown 标签并解析
+ */
 function extractJson(text: string): any {
   console.log("[Extractor] 原始输出长度:", text.length);
   let cleaned = text.trim();
+  
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```json\n?/, '').replace(/\n?```$/, '');
   }
@@ -38,21 +42,21 @@ function extractJson(text: string): any {
   try {
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
-    if (start === -1 || end === -1) throw new Error("文本中未找到 JSON 对象结构");
+    if (start === -1 || end === -1) throw new Error("未能在响应中找到 JSON 对象");
     const jsonStr = cleaned.substring(start, end + 1);
     return JSON.parse(jsonStr);
   } catch (e) {
-    console.error("[Extractor] 解析失败. 内容预览:", text.substring(0, 200));
-    throw new Error("模型返回的内容格式无法识别，请重试。");
+    console.error("[Extractor] 解析失败，内容预览:", text.substring(0, 200));
+    throw new Error("模型生成的报告格式不规范（非有效 JSON），请重试或更换对话内容。");
   }
 }
 
 async function analyzeWithDeepSeek(transcript: string, apiKey: string): Promise<SalesVisitAnalysis> {
-  console.log("[DeepSeek] 开始分析，引擎:", DEEPSEEK_MODEL);
+  console.log("[DeepSeek] 正在通过代理发起分析...");
   
-  // 设置 90 秒超时，DeepSeek 生成长 JSON 较慢
+  // 前端超时设置（略长于代理层，作为最后一道防线）
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 90000);
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
 
   try {
     const response = await fetch(PROXY_ENDPOINT, {
@@ -64,7 +68,7 @@ async function analyzeWithDeepSeek(transcript: string, apiKey: string): Promise<
         model: DEEPSEEK_MODEL,
         messages: [
           { role: "system", content: SYSTEM_INSTRUCTION },
-          { role: "user", content: `分析此对话并输出报告：\n\n${transcript}` }
+          { role: "user", content: `请分析此对话：\n\n${transcript}` }
         ],
         stream: false,
         response_format: { type: "json_object" },
@@ -74,42 +78,33 @@ async function analyzeWithDeepSeek(transcript: string, apiKey: string): Promise<
 
     clearTimeout(timeoutId);
 
-    // 关键：检测代理是否存在 (404 通常意味着没有部署后端或路径错误)
     if (response.status === 404) {
-      throw new Error("后端分析代理(Proxy)未找到。如果你在本地运行，请确保已通过 Vercel CLI 启动；如果在生产环境，请确认部署已包含 api/ 目录。");
+      throw new Error("后端代理函数 (api/deepseek-proxy) 未找到。请确认已在 Vercel 环境下部署，或正在使用 vercel dev 运行。");
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[DeepSeek] 服务器返回错误:", errorText);
-      let msg = `接口响应异常 (${response.status})`;
-      try {
-        const errJson = JSON.parse(errorText);
-        msg = errJson.error?.message || errJson.error || msg;
-      } catch(e) {}
-      throw new Error(msg);
+      const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+      throw new Error(errorData.error || `接口请求失败 (${response.status})`);
     }
 
     const result = await response.json();
-    console.log("[DeepSeek] 请求成功，正在解析内容...");
     const content = result.choices?.[0]?.message?.content;
     
-    if (!content) throw new Error("DeepSeek 未返回有效结果，可能是 API Key 余额不足或被拦截。");
+    if (!content) throw new Error("DeepSeek 未能生成分析内容，请检查账户余额或 API 状态。");
 
     return extractJson(content);
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
-      console.error("[DeepSeek] 请求已超时");
-      throw new Error("分析请求超时（90秒）。当前 DeepSeek 服务器负载较高，建议精简对话内容或切换到 Gemini。");
+      throw new Error("分析请求超时。DeepSeek 当前服务器拥堵，响应时间超过了 60 秒限制，建议切换至 Gemini Flash 引擎。");
     }
-    console.error("[DeepSeek] 捕获到异常:", err);
+    console.error("[DeepSeek Error]:", err);
     throw err;
   }
 }
 
 async function analyzeWithGemini(transcript: string): Promise<SalesVisitAnalysis> {
-  console.log("[Gemini] 开始分析...");
+  console.log("[Gemini] 正在发起分析...");
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
