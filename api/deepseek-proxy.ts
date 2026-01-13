@@ -11,8 +11,6 @@ export default async function handler(req: Request) {
     });
   }
 
-  const startTime = Date.now();
-
   try {
     const body = await req.json();
     const { apiKey, ...deepseekPayload } = body;
@@ -24,7 +22,8 @@ export default async function handler(req: Request) {
       });
     }
 
-    // 官方 Endpoint: https://api.deepseek.com/chat/completions
+    // 转发请求到 DeepSeek，强制开启 stream 模式。
+    // 流式传输能让 Vercel 立即感知到数据活动，从而维持长连接，避免 504 超时。
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
@@ -33,30 +32,31 @@ export default async function handler(req: Request) {
       },
       body: JSON.stringify({
         ...deepseekPayload,
-        // 确保禁用流式输出，以便一次性返回 JSON
-        stream: false 
+        stream: true 
       })
     });
 
-    const data = await response.text();
-    const duration = Date.now() - startTime;
-    
-    console.log(`[DeepSeek Proxy] Status: ${response.status}, Time: ${duration}ms`);
-    
-    return new Response(data, {
-      status: response.status,
-      headers: { 
-        'Content-Type': 'application/json',
-        'X-Response-Time': `${duration}ms`
-      }
+    if (!response.ok) {
+      const errorText = await response.text();
+      return new Response(errorText, {
+        status: response.status,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // 将 DeepSeek 的 ReadableStream 直接透传给前端
+    return new Response(response.body, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
     });
 
   } catch (error: any) {
-    const duration = Date.now() - startTime;
-    console.error(`[DeepSeek Proxy Error] ${duration}ms:`, error);
-    
+    console.error(`[DeepSeek Proxy Error]:`, error);
     return new Response(JSON.stringify({ 
-      error: '代理网关错误',
+      error: '代理网关内部错误',
       details: error.message
     }), { 
       status: 502,
