@@ -5,7 +5,7 @@ export const config = {
 
 export default async function handler(req: Request) {
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), { 
+    return new Response(JSON.stringify({ error: '仅支持 POST 请求' }), { 
       status: 405,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -18,22 +18,22 @@ export default async function handler(req: Request) {
     const { apiKey, ...deepseekPayload } = body;
 
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: '请在前端配置 API Key' }), { 
+      return new Response(JSON.stringify({ error: '未检测到 API Key' }), { 
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
 
-    // 调用 DeepSeek 官方标准接口
+    // 官方 Endpoint: https://api.deepseek.com/chat/completions
     const response = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey.trim()}`,
-        'Accept': 'application/json',
       },
       body: JSON.stringify({
         ...deepseekPayload,
+        // 确保禁用流式输出，以便一次性返回 JSON
         stream: false 
       })
     });
@@ -41,26 +41,25 @@ export default async function handler(req: Request) {
     const data = await response.text();
     const duration = Date.now() - startTime;
     
-    console.log(`[DeepSeek Proxy] Status: ${response.status}, Latency: ${duration}ms`);
+    console.log(`[DeepSeek Proxy] Status: ${response.status}, Time: ${duration}ms`);
     
     return new Response(data, {
       status: response.status,
       headers: { 
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        'X-Proxy-Latency': `${duration}ms`
+        'X-Response-Time': `${duration}ms`
       }
     });
 
   } catch (error: any) {
     const duration = Date.now() - startTime;
-    console.error(`[DeepSeek Proxy Error] after ${duration}ms:`, error);
+    console.error(`[DeepSeek Proxy Error] ${duration}ms:`, error);
     
     return new Response(JSON.stringify({ 
-      error: '分析代理请求失败',
-      details: error.message || '网络连接异常'
+      error: '代理网关错误',
+      details: error.message
     }), { 
-      status: 500,
+      status: 502,
       headers: { 'Content-Type': 'application/json' }
     });
   }
