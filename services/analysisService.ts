@@ -7,7 +7,6 @@ export type ModelProvider = 'deepseek' | 'gemini';
 const PROXY_ENDPOINT = '/api/deepseek-proxy';
 const DEEPSEEK_MODEL = 'deepseek-chat';
 
-// 优化点：不再要求模型返回 transcript 全文，而是返回 key_moments 关键点
 const COMMON_JSON_STRUCTURE = `
 请以“深度归纳”为原则，输出纯净的 JSON 字符串（严禁包含任何 Markdown 格式标记如 \`\`\`json 或解释性文字）。
 如果文本过长，请聚焦于最具有诊断价值的片段，严禁复读全文。
@@ -59,22 +58,22 @@ const COMMON_JSON_STRUCTURE = `
 
 export const SCENARIO_CONFIGS: Record<ScenarioKey, { system: string, template: (t: string) => string, name: string }> = {
   telesales_coaching: {
-    name: "电销实战·归纳诊断版",
+    name: "电销实战教练",
     system: "你是一位极简主义的电销督导。任务：对通话进行深度归纳，剥离废话，直击销售盲点。仅输出有效 JSON。",
     template: (transcript: string) => `对以下电销对话进行深度归纳诊断：\n\n${transcript}\n\n${COMMON_JSON_STRUCTURE}`
   },
   field_sales_visit: {
-    name: "现场销售·归纳诊断版",
+    name: "现场销售教练",
     system: "你是一位实战派现场销售教练。任务：归纳客户现场心理变化，识破成交伪装。仅输出有效 JSON。",
     template: (transcript: string) => `对以下现场沟通进行深度归纳诊断：\n\n${transcript}\n\n${COMMON_JSON_STRUCTURE}`
   },
   livestream_sales: {
-    name: "直播销售·归纳诊断版",
+    name: "直播销售教练",
     system: "你是一位高效直播电商教练。任务：归纳话术节奏断点，提升单坑产产出。仅输出有效 JSON。",
     template: (transcript: string) => `对以下直播话术进行深度归纳诊断：\n\n${transcript}\n\n${COMMON_JSON_STRUCTURE}`
   },
   test_drive_sales: {
-    name: "试驾体验·归纳诊断版",
+    name: "试驾体验教练",
     system: "你是一位性能导向的试驾教练。任务：归纳体感转化效果，指出动态沟通失误。仅输出有效 JSON。",
     template: (transcript: string) => `对以下试驾过程进行深度归纳诊断：\n\n${transcript}\n\n${COMMON_JSON_STRUCTURE}`
   }
@@ -82,34 +81,26 @@ export const SCENARIO_CONFIGS: Record<ScenarioKey, { system: string, template: (
 
 function extractJson(text: string): any {
   let cleaned = text.trim();
-  
-  // 1. 尝试直接通过正则定位 JSON 块
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error("模型响应格式异常：未能识别到 JSON 结构");
   }
   
   let jsonStr = jsonMatch[0];
-
-  // 2. 自动修复被截断的 JSON（针对长文本常见问题）
   const openBraces = (jsonStr.match(/\{/g) || []).length;
   const closeBraces = (jsonStr.match(/\}/g) || []).length;
   if (openBraces > closeBraces) {
-    // 补全缺失的右括号和可能被截断的数组
     jsonStr += '}'.repeat(openBraces - closeBraces);
-    console.warn("Detected truncated JSON, attempted auto-fix.");
   }
 
   try {
     return JSON.parse(jsonStr);
   } catch (e) {
-    // 3. 二次修复：清理控制字符
     try {
       const fixedJson = jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
       return JSON.parse(fixedJson);
     } catch (innerError) {
-      console.error("JSON Parse Error Details:", e, "Content:", jsonStr);
-      throw new Error("诊断报告解析失败。原因：对话内容过长导致输出被截断，请尝试分段输入。");
+      throw new Error("报告解析失败。原因：输入内容过长导致输出截断。建议分段粘贴进行分析。");
     }
   }
 }
@@ -127,7 +118,7 @@ async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, ap
         { role: "user", content: config.template(transcript) }
       ],
       temperature: 0.1,
-      max_tokens: 4000 // 增加输出限制，确保存储足够的诊断内容
+      max_tokens: 4000 
     })
   });
 
@@ -154,7 +145,6 @@ async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, ap
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || !trimmed.startsWith('data: ')) continue;
-      
       const dataStr = trimmed.slice(6);
       if (dataStr === '[DONE]') continue;
       try {
@@ -168,34 +158,46 @@ async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, ap
   return extractJson(fullContent);
 }
 
-async function analyzeWithGemini(transcript: string, scenario: ScenarioKey): Promise<SalesVisitAnalysis> {
+async function analyzeWithGemini(transcript: string, scenario: ScenarioKey, apiKey: string): Promise<SalesVisitAnalysis> {
   const config = SCENARIO_CONFIGS[scenario];
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: config.template(transcript),
-    config: {
-      systemInstruction: config.system,
-      thinkingConfig: { thinkingBudget: 0 },
-      responseMimeType: "application/json",
-      temperature: 0.1,
+  
+  // 使用用户传入的 Key 进行初始化
+  const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+  
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: config.template(transcript),
+      config: {
+        systemInstruction: config.system,
+        thinkingConfig: { thinkingBudget: 32768 },
+        responseMimeType: "application/json",
+        temperature: 0.1,
+      }
+    });
+    
+    if (!response.text) throw new Error("Gemini 未返回任何有效内容。");
+    return extractJson(response.text);
+  } catch (err: any) {
+    if (err.message?.includes("API key not valid")) {
+      throw new Error("Gemini API Key 无效，请检查您的输入。");
     }
-  });
-  return extractJson(response.text || '{}');
+    throw err;
+  }
 }
 
 export const runAnalysis = async (
   transcript: string, 
   scenario: ScenarioKey,
   provider: ModelProvider,
-  deepseekApiKey?: string
+  apiKey: string
 ): Promise<{ data: SalesVisitAnalysis, provider: ModelProvider }> => {
   if (provider === 'deepseek') {
-    if (!deepseekApiKey) throw new Error("请输入您的 DeepSeek API Key");
-    const data = await analyzeWithDeepSeek(transcript, scenario, deepseekApiKey);
+    const data = await analyzeWithDeepSeek(transcript, scenario, apiKey);
     return { data, provider };
   } else {
-    const data = await analyzeWithGemini(transcript, scenario);
+    // 优先使用传入的 apiKey
+    const data = await analyzeWithGemini(transcript, scenario, apiKey);
     return { data, provider };
   }
 };

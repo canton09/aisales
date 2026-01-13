@@ -4,8 +4,8 @@ import { runAnalysis, ModelProvider, SCENARIO_CONFIGS } from './services/analysi
 import { SalesVisitAnalysis, ScenarioKey } from './types';
 import { AnalysisDashboard } from './components/AnalysisDashboard';
 import { 
-  Loader2, Sparkles, Car, Cpu, Key, AlertCircle, Clock, 
-  PhoneCall, Users, MonitorPlay, Compass, ChevronLeft 
+  Loader2, Sparkles, Car, Key, AlertCircle, 
+  PhoneCall, Users, MonitorPlay, Compass, ChevronLeft, ShieldCheck
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -15,12 +15,18 @@ const App: React.FC = () => {
   const [timer, setTimer] = useState(0);
   const timerRef = useRef<number | null>(null);
 
+  // 密钥状态管理：全部采用本地存储模式
+  const [geminiApiKey, setGeminiApiKey] = useState(() => {
+    return localStorage.getItem('user_gemini_api_key') || '';
+  });
   const [deepseekApiKey, setDeepseekApiKey] = useState(() => {
     return localStorage.getItem('user_deepseek_api_key') || '';
   });
+  
   const [provider, setProvider] = useState<ModelProvider>(() => {
     return (localStorage.getItem('preferred_provider') as ModelProvider) || 'gemini';
   });
+  
   const [result, setResult] = useState<{data: SalesVisitAnalysis, provider: ModelProvider} | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +37,10 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('user_deepseek_api_key', deepseekApiKey);
   }, [deepseekApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem('user_gemini_api_key', geminiApiKey);
+  }, [geminiApiKey]);
 
   useEffect(() => {
     if (isAnalyzing) {
@@ -49,28 +59,35 @@ const App: React.FC = () => {
   const handleAnalyze = async () => {
     if (!transcript.trim() || !selectedScenario) return;
     
+    // 检查对应 Provider 的 Key 是否已填
     if (provider === 'deepseek' && !deepseekApiKey.trim()) {
-      setError('请先配置您的 DeepSeek API Key');
+      setError('请先输入您的 DeepSeek API Key');
+      return;
+    }
+    
+    if (provider === 'gemini' && !geminiApiKey.trim()) {
+      setError('请先输入您的 Gemini API Key');
       return;
     }
 
     setIsAnalyzing(true);
     setError(null);
     try {
-      const response = await runAnalysis(transcript, selectedScenario, provider, deepseekApiKey);
+      const currentKey = provider === 'gemini' ? geminiApiKey : deepseekApiKey;
+      const response = await runAnalysis(transcript, selectedScenario, provider, currentKey);
       setResult(response);
     } catch (err: any) {
       console.error("Analysis Error:", err);
-      setError(err.message || '分析中断，请检查 API 配置或网络环境。');
+      setError(err.message || '分析中断，请确认 API Key 正确且网络通畅。');
     } finally {
       setIsAnalyzing(false);
     }
   };
 
   const getLoadingMessage = () => {
-    if (timer < 5) return "建立连接...";
-    if (timer < 15) return "解析逻辑...";
-    return "生成报告...";
+    if (timer < 5) return "正在建立加密通道...";
+    if (timer < 15) return "AI 正在深度拆解逻辑...";
+    return "正在生成犀利复盘报告...";
   };
 
   const scenarioCards = [
@@ -100,7 +117,10 @@ const App: React.FC = () => {
             </div>
             <span className="font-bold text-lg tracking-tight">SalesCoach<span className="text-indigo-400">AI</span></span>
           </div>
-          <span className="text-[10px] font-black text-slate-400 border border-white/10 px-2 py-0.5 rounded-full uppercase">PRO</span>
+          <div className="flex items-center gap-2">
+             <ShieldCheck className="w-3 h-3 text-emerald-500" />
+             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Local Privacy</span>
+          </div>
         </div>
       </nav>
 
@@ -111,7 +131,7 @@ const App: React.FC = () => {
               <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white mb-2">
                 犀利教练 <span className="text-indigo-400 text-2xl md:text-5xl block md:inline">实战复盘</span>
               </h1>
-              <p className="text-slate-400 text-sm md:text-base">选择业务场景，解剖沟通漏洞</p>
+              <p className="text-slate-400 text-sm md:text-base">自带密钥，保护您的商业隐私数据</p>
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
@@ -138,36 +158,41 @@ const App: React.FC = () => {
               onClick={handleBack}
               className="flex items-center gap-1.5 text-slate-400 hover:text-white font-bold text-xs"
             >
-              <ChevronLeft className="w-3.5 h-3.5" /> 返回场景
+              <ChevronLeft className="w-3.5 h-3.5" /> 返回场景选择
             </button>
 
             <div className="bg-slate-900/50 p-5 md:p-8 rounded-2xl md:rounded-[2rem] border border-white/5 space-y-5 shadow-2xl backdrop-blur-xl">
               <div className="flex items-center justify-between border-b border-white/5 pb-4">
                 <h2 className="text-lg md:text-2xl font-bold text-white truncate">{SCENARIO_CONFIGS[selectedScenario].name}</h2>
                 <div className="flex bg-black/40 p-1 rounded-lg border border-white/5 scale-90 md:scale-100 origin-right">
-                  <button onClick={() => setProvider('deepseek')} className={`px-2 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${provider === 'deepseek' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}>DS</button>
-                  <button onClick={() => setProvider('gemini')} className={`px-2 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${provider === 'gemini' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>GM</button>
+                  <button onClick={() => setProvider('gemini')} className={`px-2 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${provider === 'gemini' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}>Gemini</button>
+                  <button onClick={() => setProvider('deepseek')} className={`px-2 md:px-4 py-1.5 rounded-md text-[10px] md:text-xs font-bold transition-all ${provider === 'deepseek' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}>DeepSeek</button>
                 </div>
               </div>
 
-              {provider === 'deepseek' && (
-                <div className="relative">
-                  <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+              {/* 统一的手动输入 Key 区域 */}
+              <div className="space-y-3">
+                <div className="relative group">
+                  <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
                   <input
                     type="password"
-                    value={deepseekApiKey}
-                    onChange={(e) => setDeepseekApiKey(e.target.value)}
-                    placeholder="API Key (sk-...)"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/40 border border-white/10 text-sm"
+                    value={provider === 'gemini' ? geminiApiKey : deepseekApiKey}
+                    onChange={(e) => provider === 'gemini' ? setGeminiApiKey(e.target.value) : setDeepseekApiKey(e.target.value)}
+                    placeholder={provider === 'gemini' ? "粘贴您的 Gemini API Key" : "粘贴您的 DeepSeek API Key"}
+                    className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/40 border border-white/10 text-sm focus:border-indigo-500/50 outline-none transition-all placeholder:text-slate-600"
                   />
                 </div>
-              )}
+                <p className="px-1 text-[10px] text-slate-500 flex items-center gap-1.5 font-medium">
+                   <ShieldCheck className="w-3 h-3 text-emerald-500/50" />
+                   您的 API Key 会记录在浏览器 localStorage 中，仅在发起请求时使用。
+                </p>
+              </div>
 
               <textarea
                 value={transcript}
                 onChange={(e) => setTranscript(e.target.value)}
                 disabled={isAnalyzing}
-                placeholder="粘贴对话转写记录..."
+                placeholder="在此粘贴对话转写记录..."
                 className="w-full h-64 md:h-80 p-4 rounded-xl bg-black/40 border border-white/10 text-slate-200 text-sm leading-relaxed outline-none focus:border-indigo-500/50 transition-colors"
               />
 
@@ -185,22 +210,16 @@ const App: React.FC = () => {
                   ) : (
                     <>
                       <Sparkles className="w-5 h-5" />
-                      启动复盘
+                      启动诊断复盘
                     </>
                   )}
                 </button>
-                
-                {isAnalyzing && (
-                  <p className="text-[10px] text-center text-indigo-400 font-bold uppercase tracking-widest animate-pulse">
-                    {getLoadingMessage()}
-                  </p>
-                )}
               </div>
 
               {error && (
                 <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-xs font-medium flex gap-2 items-start">
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <p>{error}</p>
+                  <p className="leading-relaxed">{error}</p>
                 </div>
               )}
             </div>
@@ -208,11 +227,11 @@ const App: React.FC = () => {
         ) : (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500 px-1">
             <div className="flex justify-between items-center no-print">
-              <button onClick={handleBack} className="flex items-center gap-1 text-slate-400 font-bold text-xs">
-                <ChevronLeft className="w-3 h-3" /> 返回
+              <button onClick={handleBack} className="flex items-center gap-1 text-slate-400 font-bold text-xs hover:text-white transition-colors">
+                <ChevronLeft className="w-3 h-3" /> 返回修改
               </button>
               <div className="text-[9px] font-black uppercase tracking-tighter text-slate-500 bg-white/5 px-2 py-0.5 rounded-full">
-                {result.provider} Engine
+                Powered by {result.provider}
               </div>
             </div>
             <div className="bg-slate-100 text-slate-900 rounded-2xl md:rounded-[2rem] overflow-hidden shadow-2xl">
@@ -223,7 +242,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="mt-12 text-center text-slate-700 text-[9px] uppercase font-black tracking-widest pb-4">
-        &copy; 2025 Sales Coaching Platform
+        &copy; 2025 Sales Coaching Platform | Fully Private Analysis
       </footer>
     </div>
   );
