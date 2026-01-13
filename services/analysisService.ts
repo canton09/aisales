@@ -7,23 +7,53 @@ export type ModelProvider = 'deepseek' | 'gemini';
 const PROXY_ENDPOINT = '/api/deepseek-proxy';
 const DEEPSEEK_MODEL = 'deepseek-chat';
 
-const JSON_STRUCTURE_INSTRUCTION = `
-输出必须是一个严格的 JSON 对象。
-结构如下：
-1. summary (对象: title, time, location, participants, text)
-2. highlights (字符串数组)
-3. transcript (对象数组: speaker, time, text)
-4. insights (对象: battle_evaluation, customer_intent, customer_portrait, sales_performance, psychological_change, coaching_guidance, competitor_defense, next_steps)
+const SYSTEM_INSTRUCTION = `你是一位深耕汽车零售行业的专业“销售教练”。你不仅能精准捕捉客户的潜台词，更能以专业、客观且直接的方式纠正销售人员的实战错误。你的分析基于“客户类型 x 沟通策略 x 行业法则”的多维框架。在输出中，严禁直接复读理论名词（如ACE、FABE、SPIN、LSCPA、N.E.T.S.），你必须将这些底层逻辑转化为犀利、正式且具备高度可落地性的教练指导。你的核心任务是根据客户表现（理性对比、价格敏感、感性体验、决策犹豫、品牌导向）匹配最优的沟通逻辑。输出必须是严格 JSON，禁止输出任何 JSON 之外的文字。`;
+
+const PROMPT_TEMPLATE = (transcript: string) => `
+基于以下录音转写，以销售教练的身份直接输出复盘结果。
+【转写内容】
+${transcript}
+
+【输出要求】
+请严格按照以下JSON结构输出：
+一、summary：
+- title: 带有教练点评色彩的标题
+- time: 时间
+- location: 地点
+- participants: 参与者数组
+- text: 100字以内，基于客户类型识别，直接定性这单聊得怎么样。
+
+二、highlights：
+提取5-8个真正决定成交走向的关键瞬间（如：策略转换点、价值重构时刻）。
+
+三、transcript：
+每段格式为 {"speaker": "说话人", "time": "时间戳", "text": "内容"}
+
+四、insights：
+（注意：语气要专业且犀利，拒绝说教）
+1. battle_evaluation: 【销售评级】：[S/A/B/C/D]
+2. customer_intent: 【客户意向】：[S/A/B/C/D]。点出是否完成了“诊断-匹配-转化”的逻辑闭环，成败关键点在哪。
+3. customer_portrait: 
+   - type: 从“理性对比/价格敏感/感性体验/决策犹豫/品牌导向”中精准定性。
+   - urgency: 【购买紧迫度】：判断其决策周期。
+   - concerns: 【他在想什么】：深挖最担心的3个点。
+4. sales_performance:
+   - pros: 【亮点】：精准夸奖点。
+   - style: 【风格/状态】：定性分析。
+   - cons: 【核心失分点】：针对本场沟通，必须分段列出至少4个及以上的核心失分点。
+5. psychological_change: [进店] -> [转折点] -> [博弈时] -> [走人时] 的真实心态变化数组。
+6. coaching_guidance: (针对客户死穴，提供2组示范)
+   - original_q: 客户原话。
+   - subtext: 【他其实想问】：翻译客户的潜台词。
+   - coach_comment: 【教练点评】：指出逻辑误区。
+   - coaching_script: 【销售教练实战话术】：直接给出一段【定制版】话术。要求：理性客户给数据，感性客户给场景，价格客户给周期价值，品牌客户给身份认同。
+7. competitor_defense: 提了谁、比什么、一句话反击。
+8. next_steps:
+   - method: 【怎么追】：给出具体的触达由头。
+   - owner: 负责人。
+   - goal: 【搞定指标】：下一步的具体目的。
 `;
 
-const SYSTEM_INSTRUCTION = `你是一位专业的汽车销售复盘教练。
-你必须以 json 格式输出分析结果。
-${JSON_STRUCTURE_INSTRUCTION}
-直接输出 JSON 字符串，不要包含 Markdown 格式包裹符（如 \`\`\`json）。`;
-
-/**
- * 鲁棒的 JSON 提取器：处理可能夹杂在文本中的 JSON
- */
 function extractJson(text: string): any {
   let cleaned = text.trim();
   if (cleaned.startsWith('```')) {
@@ -35,10 +65,12 @@ function extractJson(text: string): any {
     const end = cleaned.lastIndexOf('}');
     if (start === -1 || end === -1) throw new Error("未找到有效 JSON");
     const jsonStr = cleaned.substring(start, end + 1);
-    return JSON.parse(jsonStr);
+    const parsed = JSON.parse(jsonStr);
+    // 兼容性处理：如果返回了包裹层 "sales_visit"
+    return parsed.sales_visit || parsed;
   } catch (e) {
-    console.error("[JSON 解析失败的内容]:", text);
-    throw new Error("报告内容解析失败，可能是由于 DeepSeek 响应被截断。请尝试减少输入字数。");
+    console.error("[JSON 解析失败]:", text);
+    throw new Error("报告内容解析失败。");
   }
 }
 
@@ -51,52 +83,38 @@ async function analyzeWithDeepSeek(transcript: string, apiKey: string): Promise<
       model: DEEPSEEK_MODEL,
       messages: [
         { role: "system", content: SYSTEM_INSTRUCTION },
-        { role: "user", content: `请分析此对话并输出 json：\n\n${transcript}` }
+        { role: "user", content: PROMPT_TEMPLATE(transcript) }
       ],
       response_format: { type: "json_object" },
       temperature: 0.3,
     })
   });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `API 请求失败 (${response.status})`);
-  }
-
-  if (!response.body) throw new Error("未收到有效数据流");
+  if (!response.ok) throw new Error(`API 请求失败 (${response.status})`);
+  if (!response.body) throw new Error("无数据流");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let fullContent = "";
-  let buffer = ""; // 缓冲区，处理被切断的行
+  let buffer = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
-    
-    // 最后一行可能是不完整的，留到下一次处理
     buffer = lines.pop() || "";
-
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || !trimmed.startsWith('data: ')) continue;
-      
       const dataStr = trimmed.slice(6);
       if (dataStr === '[DONE]') continue;
-
       try {
         const json = JSON.parse(dataStr);
-        const content = json.choices?.[0]?.delta?.content || "";
-        fullContent += content;
-      } catch (e) {
-        // 如果解析失败，说明这一行可能是被截断的 SSE 数据，忽略并等待拼接
-      }
+        fullContent += (json.choices?.[0]?.delta?.content || "");
+      } catch (e) {}
     }
   }
-
   return extractJson(fullContent);
 }
 
@@ -104,15 +122,14 @@ async function analyzeWithGemini(transcript: string): Promise<SalesVisitAnalysis
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `请复盘此汽车销售对话：\n\n${transcript}`,
+    contents: PROMPT_TEMPLATE(transcript),
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,
       thinkingConfig: { thinkingBudget: 16000 },
       responseMimeType: "application/json",
     }
   });
-
-  return JSON.parse(response.text || '{}');
+  return extractJson(response.text || '{}');
 }
 
 export const runAnalysis = async (
