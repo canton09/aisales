@@ -1,4 +1,6 @@
 
+export type ScenarioKey = 'telesales_coaching' | 'field_sales_visit' | 'livestream_sales' | 'test_drive_sales';
+
 export interface TranscriptItem {
   speaker: string;
   time: string;
