@@ -1,12 +1,15 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { runAnalysis, ModelProvider, SCENARIO_CONFIGS } from './services/analysisService';
+import { runAnalysis, ModelProvider, SCENARIO_CONFIGS, validateApiKey } from './services/analysisService';
 import { SalesVisitAnalysis, ScenarioKey } from './types';
 import { AnalysisDashboard } from './components/AnalysisDashboard';
 import { 
   Loader2, Sparkles, Car, Key, AlertCircle, 
-  PhoneCall, Users, MonitorPlay, Compass, ChevronLeft, ShieldCheck
+  PhoneCall, Users, MonitorPlay, Compass, ChevronLeft, ShieldCheck,
+  CheckCircle2, XCircle
 } from 'lucide-react';
+
+type KeyStatus = 'idle' | 'loading' | 'success' | 'error';
 
 const App: React.FC = () => {
   const [selectedScenario, setSelectedScenario] = useState<ScenarioKey | null>(null);
@@ -15,13 +18,11 @@ const App: React.FC = () => {
   const [timer, setTimer] = useState(0);
   const timerRef = useRef<number | null>(null);
 
-  // 密钥状态管理：全部采用本地存储模式
-  const [geminiApiKey, setGeminiApiKey] = useState(() => {
-    return localStorage.getItem('user_gemini_api_key') || '';
-  });
-  const [deepseekApiKey, setDeepseekApiKey] = useState(() => {
-    return localStorage.getItem('user_deepseek_api_key') || '';
-  });
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('user_gemini_api_key') || '');
+  const [deepseekApiKey, setDeepseekApiKey] = useState(() => localStorage.getItem('user_deepseek_api_key') || '');
+  
+  const [geminiStatus, setGeminiStatus] = useState<KeyStatus>('idle');
+  const [deepseekStatus, setDeepseekStatus] = useState<KeyStatus>('idle');
   
   const [provider, setProvider] = useState<ModelProvider>(() => {
     return (localStorage.getItem('preferred_provider') as ModelProvider) || 'gemini';
@@ -34,13 +35,23 @@ const App: React.FC = () => {
     localStorage.setItem('preferred_provider', provider);
   }, [provider]);
 
-  useEffect(() => {
-    localStorage.setItem('user_deepseek_api_key', deepseekApiKey);
-  }, [deepseekApiKey]);
+  const handleVerify = async (targetProvider: ModelProvider) => {
+    const key = targetProvider === 'gemini' ? geminiApiKey : deepseekApiKey;
+    if (!key.trim()) return;
 
-  useEffect(() => {
-    localStorage.setItem('user_gemini_api_key', geminiApiKey);
-  }, [geminiApiKey]);
+    if (targetProvider === 'gemini') setGeminiStatus('loading');
+    else setDeepseekStatus('loading');
+
+    const isValid = await validateApiKey(targetProvider, key);
+
+    if (targetProvider === 'gemini') {
+      setGeminiStatus(isValid ? 'success' : 'error');
+      if (isValid) localStorage.setItem('user_gemini_api_key', key);
+    } else {
+      setDeepseekStatus(isValid ? 'success' : 'error');
+      if (isValid) localStorage.setItem('user_deepseek_api_key', key);
+    }
+  };
 
   useEffect(() => {
     if (isAnalyzing) {
@@ -59,21 +70,15 @@ const App: React.FC = () => {
   const handleAnalyze = async () => {
     if (!transcript.trim() || !selectedScenario) return;
     
-    // 检查对应 Provider 的 Key 是否已填
-    if (provider === 'deepseek' && !deepseekApiKey.trim()) {
-      setError('请先输入您的 DeepSeek API Key');
-      return;
-    }
-    
-    if (provider === 'gemini' && !geminiApiKey.trim()) {
-      setError('请先输入您的 Gemini API Key');
+    const currentKey = provider === 'gemini' ? geminiApiKey : deepseekApiKey;
+    if (!currentKey.trim()) {
+      setError(`请先输入并验证您的 ${provider === 'gemini' ? 'Gemini' : 'DeepSeek'} API Key`);
       return;
     }
 
     setIsAnalyzing(true);
     setError(null);
     try {
-      const currentKey = provider === 'gemini' ? geminiApiKey : deepseekApiKey;
       const response = await runAnalysis(transcript, selectedScenario, provider, currentKey);
       setResult(response);
     } catch (err: any) {
@@ -106,6 +111,8 @@ const App: React.FC = () => {
       setError(null);
     }
   };
+
+  const currentStatus = provider === 'gemini' ? geminiStatus : deepseekStatus;
 
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-100 pb-8">
@@ -170,21 +177,47 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* 统一的手动输入 Key 区域 */}
               <div className="space-y-3">
-                <div className="relative group">
-                  <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
-                  <input
-                    type="password"
-                    value={provider === 'gemini' ? geminiApiKey : deepseekApiKey}
-                    onChange={(e) => provider === 'gemini' ? setGeminiApiKey(e.target.value) : setDeepseekApiKey(e.target.value)}
-                    placeholder={provider === 'gemini' ? "粘贴您的 Gemini API Key" : "粘贴您的 DeepSeek API Key"}
-                    className="w-full pl-10 pr-4 py-3 rounded-xl bg-black/40 border border-white/10 text-sm focus:border-indigo-500/50 outline-none transition-all placeholder:text-slate-600"
-                  />
+                <div className="flex gap-2">
+                  <div className="relative flex-1 group">
+                    <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                    <input
+                      type="password"
+                      value={provider === 'gemini' ? geminiApiKey : deepseekApiKey}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (provider === 'gemini') {
+                          setGeminiApiKey(val);
+                          setGeminiStatus('idle');
+                        } else {
+                          setDeepseekApiKey(val);
+                          setDeepseekStatus('idle');
+                        }
+                      }}
+                      placeholder={provider === 'gemini' ? "粘贴您的 Gemini API Key" : "粘贴您的 DeepSeek API Key"}
+                      className="w-full pl-10 pr-10 py-3 rounded-xl bg-black/40 border border-white/10 text-sm focus:border-indigo-500/50 outline-none transition-all placeholder:text-slate-600"
+                    />
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      {currentStatus === 'loading' && <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />}
+                      {currentStatus === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                      {currentStatus === 'error' && <XCircle className="w-4 h-4 text-rose-500" />}
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleVerify(provider)}
+                    disabled={currentStatus === 'loading' || !(provider === 'gemini' ? geminiApiKey : deepseekApiKey).trim()}
+                    className={`px-4 rounded-xl font-bold text-xs transition-all flex items-center gap-2 ${
+                      currentStatus === 'success' 
+                      ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30' 
+                      : 'bg-white/5 text-white border border-white/10 hover:bg-white/10'
+                    }`}
+                  >
+                    {currentStatus === 'loading' ? '校验中...' : currentStatus === 'success' ? '已确认' : '确认 Key'}
+                  </button>
                 </div>
                 <p className="px-1 text-[10px] text-slate-500 flex items-center gap-1.5 font-medium">
                    <ShieldCheck className="w-3 h-3 text-emerald-500/50" />
-                   您的 API Key 会记录在浏览器 localStorage 中，仅在发起请求时使用。
+                   您的 API Key 会加密存储在本地，仅在分析时调用官方 API。
                 </p>
               </div>
 
@@ -199,8 +232,8 @@ const App: React.FC = () => {
               <div className="space-y-3">
                 <button
                   onClick={handleAnalyze}
-                  disabled={isAnalyzing || !transcript.trim()}
-                  className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold text-base transition-all active:scale-95 disabled:opacity-50"
+                  disabled={isAnalyzing || !transcript.trim() || currentStatus !== 'success'}
+                  className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white py-4 rounded-xl font-bold text-base transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isAnalyzing ? (
                     <>
@@ -210,7 +243,7 @@ const App: React.FC = () => {
                   ) : (
                     <>
                       <Sparkles className="w-5 h-5" />
-                      启动诊断复盘
+                      {currentStatus !== 'success' ? '请先确认 API Key' : '启动诊断复盘'}
                     </>
                   )}
                 </button>

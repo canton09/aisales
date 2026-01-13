@@ -105,6 +105,41 @@ function extractJson(text: string): any {
   }
 }
 
+export async function validateApiKey(provider: ModelProvider, apiKey: string): Promise<boolean> {
+  if (!apiKey.trim()) return false;
+  
+  if (provider === 'gemini') {
+    try {
+      const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: 'hi',
+      });
+      return !!response.text;
+    } catch (e) {
+      console.error("Gemini Validation Error:", e);
+      return false;
+    }
+  } else {
+    try {
+      const response = await fetch(PROXY_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: apiKey.trim(),
+          model: DEEPSEEK_MODEL,
+          messages: [{ role: "user", content: "hi" }],
+          max_tokens: 5
+        })
+      });
+      return response.ok;
+    } catch (e) {
+      console.error("DeepSeek Validation Error:", e);
+      return false;
+    }
+  }
+}
+
 async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, apiKey: string): Promise<SalesVisitAnalysis> {
   const config = SCENARIO_CONFIGS[scenario];
   const response = await fetch(PROXY_ENDPOINT, {
@@ -160,8 +195,6 @@ async function analyzeWithDeepSeek(transcript: string, scenario: ScenarioKey, ap
 
 async function analyzeWithGemini(transcript: string, scenario: ScenarioKey, apiKey: string): Promise<SalesVisitAnalysis> {
   const config = SCENARIO_CONFIGS[scenario];
-  
-  // 使用用户传入的 Key 进行初始化
   const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
   
   try {
@@ -196,7 +229,6 @@ export const runAnalysis = async (
     const data = await analyzeWithDeepSeek(transcript, scenario, apiKey);
     return { data, provider };
   } else {
-    // 优先使用传入的 apiKey
     const data = await analyzeWithGemini(transcript, scenario, apiKey);
     return { data, provider };
   }
